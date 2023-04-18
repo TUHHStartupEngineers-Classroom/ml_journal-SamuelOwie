@@ -48,8 +48,152 @@ So far this is just a blog where you can write in plain text and serve your writ
 So, let's say you are learning how to make a histogram in R. For example, maybe you want to sample 100 numbers from a normal distribution with mean = 0, and standard deviation = 1, and then you want to plot a histogram. You can do this right here by using an r code block, like this:
 
 ```{r}
-samples <- rnorm(100, mean=0, sd=1)
-hist(samples)
+knitr::opts_chunk$set(message=FALSE,warning=FALSE, cache=TRUE)
+```
+
+**IMPORTANT:** You can delete everything in here and start fresh. You might want to start by not deleting anything above this line until you know what that stuff is doing.
+
+This is an `.Rmd` file. It is plain text with special features. Any time you write just like this, it will be compiled to normal text in the website. If you put a \# in front of your text, it will create a top level-header.
+
+# My first post
+
+Last compiled: `r Sys.Date()`
+
+Notice that whatever you define as a top level header, automatically gets put into the table of contents bar on the left. 
+
+## Second level header
+
+You can add more headers by adding more hashtags. These won't be put into the table of contents
+
+### third level header
+
+Here's an even lower level header
+
+# My second post (note the order)
+
+Last compiled: `r Sys.Date()`
+
+I'm writing this tutorial going from the top down. And, this is how it will be printed. So, notice the second post is second in the list. If you want your most recent post to be at the top, then make a new post starting at the top. If you want the oldest first, do, then keep adding to the bottom
+
+# Adding R stuff
+
+So far this is just a blog where you can write in plain text and serve your writing to a webpage. One of the main purposes of this lab journal is to record your progress learning R. The reason I am asking you to use this process is because you can both make a website, and a lab journal, and learn R all in R-studio. This makes everything really convenient and in the same place. 
+
+So, let's say you are learning how to make a histogram in R. For example, maybe you want to sample 100 numbers from a normal distribution with mean = 0, and standard deviation = 1, and then you want to plot a histogram. You can do this right here by using an r code block, like this:
+
+```{r solution}
+#Challenge 1
+library(tidyverse)
+library(tidyquant)
+library(broom)
+library(umap)
+
+# STOCK PRICES
+sp_500_prices_tbl <- read_rds("challenges/sp_500_prices_tbl.rds")
+#sp_500_prices_tbl
+
+# SECTOR INFORMATION
+sp_500_index_tbl <- read_rds("challenges/sp_500_index_tbl.rds")
+#sp_500_index_tbl
+
+# Apply your data transformation skills!
+sp_500_daily_returns_tbl <- sp_500_prices_tbl %>%
+    select(symbol, date, adjusted) %>%
+    filter(date >= as.Date("2018-01-01")) %>%
+    group_by(symbol) %>%
+    mutate(lag_1_day = lag(adjusted, n=1, default = NA)) %>%
+    drop_na(lag_1_day) %>%
+    mutate(difference_adj_and_lag = adjusted - lag_1_day) %>%
+    mutate(pct_return = difference_adj_and_lag/lag_1_day) %>%
+    select(symbol, date, pct_return) %>%
+    ungroup()
+
+sp_500_daily_returns_tbl
+
+# Convert to User-Item Format
+stock_date_matrix_tbl <- sp_500_daily_returns_tbl %>%
+    pivot_wider(names_from = date, values_from = pct_return, values_fill = 0) %>%
+    arrange(symbol) %>%
+    ungroup()
+
+stock_date_matrix_tbl 
+
+kmeans_obj <- stock_date_matrix_tbl %>%
+    select(-symbol) %>%
+    kmeans(centers = 4, nstart = 20)
+
+# Apply glance() to get the tot.withinss
+glance(kmeans_obj)
+
+kmeans_mapper <- function(center = 3) {
+    stock_date_matrix_tbl %>%
+        select(-symbol) %>%
+        kmeans(centers = center, nstart = 20)
+}
+
+# Use purrr to map
+k_means_mapped_tbl <- tibble(centers = 1:30) %>%
+    mutate(k_means = centers %>% map(kmeans_mapper)) %>%
+    mutate(glance = k_means %>% map(glance))
+
+k_means_mapped_tbl
+
+
+# Visualize Scree Plot
+k_means_mapped_tbl %>%
+    unnest(glance) %>%
+    select(centers, tot.withinss) %>%
+    
+    ggplot(aes(centers, tot.withinss)) +
+    geom_point(color = "#E52B50", size = 3) +
+    geom_line(color = "#E52B50", size = 1) +
+    ggrepel::geom_label_repel(aes(label = centers), color = "#E52B50") +
+    labs(
+        title = "Scree Plot"
+    )
+
+umap_results <- stock_date_matrix_tbl %>%
+    select(-symbol) %>%
+    umap()
+
+# Convert umap results to tibble with symbols
+umap_results_tbl <- umap_results$layout %>%
+    as_tibble(.name_repair = "unique") %>% 
+    set_names(c("x", "y")) %>%
+    bind_cols(
+        stock_date_matrix_tbl %>% select(symbol)
+    )
+umap_results_tbl
+
+umap_results_tbl %>%
+    ggplot(aes(x, y)) +
+    geom_point(alpha=0.5, size = 4) +
+    theme_tq()
+
+k_means_obj <- k_means_mapped_tbl %>%
+    pull(k_means) %>%
+    pluck(10)
+
+# Use your dplyr & broom skills to combine the k_means_obj with the umap_results_tbl
+umap_kmeans_results_tbl <- k_means_obj %>%
+    augment(stock_date_matrix_tbl) %>%
+    select(symbol, .cluster) %>%
+    left_join(umap_results_tbl, by = c("symbol")) %>%
+    left_join(sp_500_index_tbl %>% select(symbol, company, sector), by = c("symbol"))
+
+umap_kmeans_results_tbl
+
+# Visualize the combined K-Means and UMAP results
+umap_kmeans_results_tbl %>%
+    mutate(label_text = str_glue("Stock: {symbol}
+                                 Cluster: {.cluster}")) %>%
+    ggplot(aes(x, y, color = .cluster)) +
+    geom_point(alpha = 0.5, size = 3) +
+    theme_minimal() +
+    labs(
+        title = "Stock segmentation"
+    )
+
 ```
 
 When you knit this R Markdown document, you will see that the histogram is printed to the page, along with the R code. This document can be set up to hide the R code in the webpage, just delete the comment (hashtag) from the cold folding option in the yaml header up top. For purposes of letting yourself see the code, and me see the code, best to keep it the way that it is. You'll learn that all of these things and more can be customized in each R code block.
